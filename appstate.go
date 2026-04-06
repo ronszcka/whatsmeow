@@ -95,6 +95,40 @@ func (cli *Client) fetchAppState(ctx context.Context, name appstate.WAPatchName,
 	return eventsToDispatch, nil
 }
 
+// recoverAppState forces a full resync of the named app state collection without
+// MAC validation. This is used as a last resort when both incremental sync and
+// validated full sync fail due to corrupted local state (mismatching LTHash).
+func (cli *Client) recoverAppState(ctx context.Context, name appstate.WAPatchName) error {
+	if cli == nil {
+		return ErrClientIsNil
+	}
+	cli.appStateSyncLock.Lock()
+	defer cli.appStateSyncLock.Unlock()
+
+	if err := cli.Store.AppState.DeleteAppStateVersion(ctx, string(name)); err != nil {
+		return fmt.Errorf("failed to reset app state %s version: %w", name, err)
+	}
+
+	state := appstate.HashState{Version: 0}
+	hasMore := true
+	wantSnapshot := true
+	for hasMore {
+		patches, err := cli.fetchAppStatePatches(ctx, name, state.Version, wantSnapshot)
+		if err != nil {
+			return fmt.Errorf("failed to fetch app state %s patches: %w", name, err)
+		}
+		wantSnapshot = false
+		hasMore = patches.HasMorePatches
+		state, err = cli.applyAppStatePatchesValidated(ctx, name, state, patches, true, false, nil)
+		if err != nil {
+			return fmt.Errorf("failed to apply app state %s patches: %w", name, err)
+		}
+	}
+	cli.Log.Infof("App state %s recovery completed (no MAC validation). Version: %d", name, state.Version)
+	cli.dispatchEvent(&events.AppStateSyncComplete{Name: name, Version: state.Version, Recovery: true})
+	return nil
+}
+
 func (cli *Client) handleAppStateRecovery(
 	ctx context.Context,
 	reqID types.MessageID,
@@ -156,7 +190,23 @@ func (cli *Client) applyAppStatePatches(
 	fullSync bool,
 	eventsToDispatch *[]any,
 ) (appstate.HashState, error) {
-	mutations, newState, err := cli.appStateProc.DecodePatches(ctx, patches, state, true)
+	validate := true
+	if cli.appStateSkipMACCollections != nil && cli.appStateSkipMACCollections[name] {
+		validate = false
+	}
+	return cli.applyAppStatePatchesValidated(ctx, name, state, patches, fullSync, validate, eventsToDispatch)
+}
+
+func (cli *Client) applyAppStatePatchesValidated(
+	ctx context.Context,
+	name appstate.WAPatchName,
+	state appstate.HashState,
+	patches *appstate.PatchList,
+	fullSync bool,
+	validateMACs bool,
+	eventsToDispatch *[]any,
+) (appstate.HashState, error) {
+	mutations, newState, err := cli.appStateProc.DecodePatches(ctx, patches, state, validateMACs)
 	if err != nil {
 		if errors.Is(err, appstate.ErrKeyNotFound) {
 			go cli.requestMissingAppStateKeys(context.WithoutCancel(ctx), patches)

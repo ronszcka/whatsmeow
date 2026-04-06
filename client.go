@@ -97,8 +97,9 @@ type Client struct {
 	pendingPhoneRerequests             map[types.MessageID]context.CancelFunc
 	pendingPhoneRerequestsLock         sync.RWMutex
 
-	appStateProc     *appstate.Processor
-	appStateSyncLock sync.Mutex
+	appStateProc             *appstate.Processor
+	appStateSyncLock         sync.Mutex
+	appStateSkipMACCollections map[appstate.WAPatchName]bool
 
 	historySyncNotifications  chan *waE2E.HistorySyncNotification
 	historySyncHandlerStarted atomic.Bool

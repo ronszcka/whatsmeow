@@ -68,7 +68,17 @@ func (cli *Client) handleAppStateNotification(ctx context.Context, node *waBinar
 			cli.Log.Warnf("App state %s has mismatching hash/MAC, forcing full resync", name)
 			err = cli.FetchAppState(ctx, name, true, false)
 			if err != nil {
-				cli.Log.Errorf("Failed to full resync app state %s: %v", name, err)
+				cli.Log.Warnf("Validated full resync of %s also failed, recovering without MAC validation: %v", name, err)
+				err = cli.recoverAppState(ctx, name)
+				if err != nil {
+					cli.Log.Errorf("Failed to recover app state %s: %v", name, err)
+				} else {
+					cli.Log.Infof("App state %s recovered, disabling MAC validation for future syncs", name)
+					if cli.appStateSkipMACCollections == nil {
+						cli.appStateSkipMACCollections = make(map[appstate.WAPatchName]bool)
+					}
+					cli.appStateSkipMACCollections[name] = true
+				}
 			} else {
 				cli.Log.Infof("App state %s full resync completed successfully", name)
 			}
@@ -79,25 +89,32 @@ func (cli *Client) handleAppStateNotification(ctx context.Context, node *waBinar
 }
 
 func (cli *Client) handlePictureNotification(ctx context.Context, node *waBinary.Node) {
-	ts := node.AttrGetter().UnixTime("t")
+	parentAG := node.AttrGetter()
+	ts := parentAG.UnixTime("t")
+	fromJID := parentAG.OptionalJIDOrEmpty("from")
 	for _, child := range node.GetChildren() {
 		ag := child.AttrGetter()
 		var evt events.Picture
 		evt.Timestamp = ts
-		evt.JID = ag.JID("jid")
+		evt.JID = ag.OptionalJIDOrEmpty("jid")
+		if evt.JID.IsEmpty() {
+			evt.JID = fromJID
+		}
 		evt.Author = ag.OptionalJIDOrEmpty("author")
 		if child.Tag == "delete" {
 			evt.Remove = true
 		} else if child.Tag == "add" {
 			evt.PictureID = ag.String("id")
 		} else if child.Tag == "set" {
-			// TODO sometimes there's a hash and no ID?
-			evt.PictureID = ag.String("id")
+			evt.PictureID = ag.OptionalString("id")
+			if evt.PictureID == "" {
+				evt.PictureID = ag.OptionalString("hash")
+			}
 		} else {
 			continue
 		}
-		if !ag.OK() {
-			cli.Log.Debugf("Ignoring picture change notification with unexpected attributes: %v", ag.Error())
+		if evt.JID.IsEmpty() {
+			cli.Log.Debugf("Ignoring picture change notification: no JID found")
 			continue
 		}
 		cli.dispatchEvent(&evt)
