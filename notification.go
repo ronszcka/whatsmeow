@@ -64,6 +64,14 @@ func (cli *Client) handleAppStateNotification(ctx context.Context, node *waBinar
 			// There are some app state changes right before a remote logout, so stop syncing if we're disconnected.
 			cli.Log.Debugf("Failed to sync app state after notification: %v, not trying to sync other states", err)
 			return
+		} else if errors.Is(err, appstate.ErrMismatchingLTHash) || errors.Is(err, appstate.ErrMismatchingPatchMAC) {
+			cli.Log.Warnf("App state %s has mismatching hash/MAC, forcing full resync", name)
+			err = cli.FetchAppState(ctx, name, true, false)
+			if err != nil {
+				cli.Log.Errorf("Failed to full resync app state %s: %v", name, err)
+			} else {
+				cli.Log.Infof("App state %s full resync completed successfully", name)
+			}
 		} else if err != nil {
 			cli.Log.Errorf("Failed to sync app state after notification: %v", err)
 		}
