@@ -22,14 +22,22 @@ var clientVersionRegex = regexp.MustCompile(`"client_revision":(\d+),`)
 
 // GetLatestVersion returns the latest version number from web.whatsapp.com.
 //
-// After fetching, you can update the version to use using store.SetWAVersion, e.g.
+// BiaZap patch (vs. upstream whatsmeow): the `httpClient == nil → http.DefaultClient`
+// fallback was removed. On the BiaZap fork the caller MUST pass a proxy-aware
+// client (same transport whatsmeow uses for the WS), otherwise the request
+// would leak the datacenter IP to Meta — defeating the whole point of the
+// ISP proxy pool. Passing nil now returns an explicit error instead of
+// silently using a non-proxied client.
 //
-//	latestVer, err := GetLatestVersion(nil)
+//	latestVer, err := GetLatestVersion(ctx, cli.ProxyAwareHTTPClient())
 //	if err != nil {
 //		return err
 //	}
 //	store.SetWAVersion(*latestVer)
 func GetLatestVersion(ctx context.Context, httpClient *http.Client) (*store.WAVersionContainer, error) {
+	if httpClient == nil {
+		return nil, fmt.Errorf("GetLatestVersion: httpClient must not be nil — pass a proxy-aware client or this request would bypass the ISP proxy")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, socket.Origin, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare request: %w", err)
@@ -41,9 +49,6 @@ func GetLatestVersion(ctx context.Context, httpClient *http.Client) (*store.WAVe
 	req.Header.Set("Sec-Fetch-User", "?1")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
