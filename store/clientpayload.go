@@ -124,6 +124,13 @@ var BaseClientPayload = &waWa6.ClientPayload{
 	ConnectReason: waWa6.ClientPayload_USER_ACTIVATED.Enum(),
 }
 
+// CloneBaseClientPayload returns a deep copy of the package-level payload
+// template so callers can customize a per-session payload without mutating the
+// global singleton used by legacy code paths.
+func CloneBaseClientPayload() *waWa6.ClientPayload {
+	return proto.Clone(BaseClientPayload).(*waWa6.ClientPayload)
+}
+
 var DeviceProps = &waCompanionReg.DeviceProps{
 	Os: proto.String("whatsmeow"),
 	Version: &waCompanionReg.DeviceProps_AppVersion{
