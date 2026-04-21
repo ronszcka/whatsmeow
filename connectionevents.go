@@ -198,6 +198,14 @@ func (cli *Client) handleConnectSuccess(ctx context.Context, node *waBinary.Node
 		if err != nil {
 			cli.Log.Warnf("Failed to send post-connect passive IQ: %v", err)
 		}
+		go func(generation uint64) {
+			if !cli.shouldEmitAutoPresence(generation) {
+				return
+			}
+			if err := cli.SendPresence(ctx, types.PresenceAvailable); err != nil {
+				cli.Log.Warnf("Failed to send automatic presence after connect: %v", err)
+			}
+		}(cli.autoPresenceGeneration.Load())
 		cli.dispatchEvent(&events.Connected{})
 		cli.closeSocketWaitChan()
 	}()

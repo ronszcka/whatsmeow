@@ -79,6 +79,8 @@ type Client struct {
 	// AutoReconnectHook is called when auto-reconnection fails. If the function returns false,
 	// the client will not attempt to reconnect. The number of retries can be read from AutoReconnectErrors.
 	AutoReconnectHook func(error) bool
+	// AutoReconnectDelayFn overrides the legacy linear retry delay when set.
+	AutoReconnectDelayFn func(failures int) time.Duration
 	// If SynchronousAck is set, acks for messages will only be sent after all event handlers return.
 	SynchronousAck             bool
 	EnableDecryptedEventBuffer bool
@@ -97,8 +99,8 @@ type Client struct {
 	pendingPhoneRerequests             map[types.MessageID]context.CancelFunc
 	pendingPhoneRerequestsLock         sync.RWMutex
 
-	appStateProc             *appstate.Processor
-	appStateSyncLock         sync.Mutex
+	appStateProc               *appstate.Processor
+	appStateSyncLock           sync.Mutex
 	appStateSkipMACCollections map[appstate.WAPatchName]bool
 
 	historySyncNotifications  chan *waE2E.HistorySyncNotification
@@ -161,10 +163,14 @@ type Client struct {
 	// PrePairCallback is called before pairing is completed. If it returns false, the pairing will be cancelled and
 	// the client will disconnect.
 	PrePairCallback func(jid types.JID, platform, businessName string) bool
+	// PostPairDelayFn optionally sleeps before sendUnifiedSession runs after a successful pair.
+	PostPairDelayFn func() time.Duration
 
 	// GetClientPayload is called to get the client payload for connecting to the server.
 	// This should NOT be used for WhatsApp (to change the OS name, update fields in store.BaseClientPayload directly).
 	GetClientPayload func() *waWa6.ClientPayload
+	// ShouldEmitAutoPresenceFn optionally gates the post-connect automatic presence send.
+	ShouldEmitAutoPresenceFn func(generation uint64) bool
 
 	// Should untrusted identity errors be handled automatically? If true, the stored identity and existing signal
 	// sessions will be removed on untrusted identity errors, and an events.IdentityChange will be dispatched.
@@ -183,7 +189,8 @@ type Client struct {
 	uniqueID  string
 	idCounter atomic.Uint64
 
-	serverTimeOffset atomic.Int64
+	serverTimeOffset       atomic.Int64
+	autoPresenceGeneration atomic.Uint64
 
 	mediaHTTP     *http.Client
 	websocketHTTP *http.Client
@@ -600,7 +607,7 @@ func (cli *Client) autoReconnect(ctx context.Context) {
 		return
 	}
 	for {
-		autoReconnectDelay := time.Duration(cli.AutoReconnectErrors) * 2 * time.Second
+		autoReconnectDelay := cli.nextAutoReconnectDelay()
 		cli.Log.Debugf("Automatically reconnecting after %v", autoReconnectDelay)
 		cli.AutoReconnectErrors++
 		if cli.expectedDisconnect.WaitTimeoutCtx(ctx, autoReconnectDelay) == nil {
@@ -628,6 +635,37 @@ func (cli *Client) autoReconnect(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func (cli *Client) nextAutoReconnectDelay() time.Duration {
+	if cli != nil && cli.AutoReconnectDelayFn != nil {
+		return cli.AutoReconnectDelayFn(cli.AutoReconnectErrors)
+	}
+	if cli == nil {
+		return 0
+	}
+	return time.Duration(cli.AutoReconnectErrors) * 2 * time.Second
+}
+
+func (cli *Client) postPairDelay() time.Duration {
+	if cli != nil && cli.PostPairDelayFn != nil {
+		return cli.PostPairDelayFn()
+	}
+	return 0
+}
+
+func (cli *Client) shouldEmitAutoPresence(generation uint64) bool {
+	if cli != nil && cli.ShouldEmitAutoPresenceFn != nil {
+		return cli.ShouldEmitAutoPresenceFn(generation)
+	}
+	return true
+}
+
+func (cli *Client) SetAutoPresenceGeneration(generation uint64) {
+	if cli == nil {
+		return
+	}
+	cli.autoPresenceGeneration.Store(generation)
 }
 
 // IsConnected checks if the client is connected to the WhatsApp web websocket.
