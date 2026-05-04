@@ -177,11 +177,24 @@ func SetOSInfo(name string, version [3]uint32) {
 
 func (device *Device) getRegistrationPayload() *waWa6.ClientPayload {
 	payload := proto.Clone(BaseClientPayload).(*waWa6.ClientPayload)
+	// BiaZap fork patch #9 — apply per-Device UserAgent override.
+	// When set, replaces the cloned BaseClientPayload.UserAgent in full.
+	// Caller is responsible for populating every required field on the
+	// override (AppVersion, Platform, ReleaseChannel, Mcc, Mnc, ...).
+	if device.UserAgentOverride != nil {
+		payload.UserAgent = proto.Clone(device.UserAgentOverride).(*waWa6.ClientPayload_UserAgent)
+	}
 	regID := make([]byte, 4)
 	binary.BigEndian.PutUint32(regID, device.RegistrationID)
 	preKeyID := make([]byte, 4)
 	binary.BigEndian.PutUint32(preKeyID, device.SignedPreKey.KeyID)
-	deviceProps, _ := proto.Marshal(DeviceProps)
+	// BiaZap fork patch #9 — per-Device DeviceProps override.
+	// Falls back to the package-global DeviceProps when nil.
+	devicePropsToUse := DeviceProps
+	if device.DevicePropsOverride != nil {
+		devicePropsToUse = device.DevicePropsOverride
+	}
+	deviceProps, _ := proto.Marshal(devicePropsToUse)
 	payload.DevicePairingData = &waWa6.ClientPayload_DevicePairingRegistrationData{
 		ERegid:      regID,
 		EKeytype:    []byte{ecc.DjbType},
@@ -199,6 +212,13 @@ func (device *Device) getRegistrationPayload() *waWa6.ClientPayload {
 
 func (device *Device) getLoginPayload() *waWa6.ClientPayload {
 	payload := proto.Clone(BaseClientPayload).(*waWa6.ClientPayload)
+	// BiaZap fork patch #9 — apply per-Device UserAgent override.
+	// Login payload only carries UserAgent (no DevicePairingData / DeviceProps),
+	// so the DeviceProps override is irrelevant here but is honored at the
+	// pair-time path above.
+	if device.UserAgentOverride != nil {
+		payload.UserAgent = proto.Clone(device.UserAgentOverride).(*waWa6.ClientPayload_UserAgent)
+	}
 	payload.Username = proto.Uint64(device.ID.UserInt())
 	payload.Device = proto.Uint32(uint32(device.ID.Device))
 	payload.Passive = proto.Bool(true)

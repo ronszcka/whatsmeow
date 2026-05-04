@@ -15,6 +15,8 @@ import (
 	"github.com/google/uuid"
 
 	"go.mau.fi/whatsmeow/proto/waAdv"
+	"go.mau.fi/whatsmeow/proto/waCompanionReg"
+	"go.mau.fi/whatsmeow/proto/waWa6"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/util/keys"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -243,6 +245,16 @@ type Device struct {
 	EventBuffer   EventBuffer
 	LIDs          LIDStore
 	Container     DeviceContainer
+
+	// BiaZap fork patch #9 — per-Device fingerprint overrides.
+	// When non-nil, GetClientPayload() copies the override into the
+	// generated registration/login payload INSTEAD of the package-global
+	// BaseClientPayload.UserAgent / DeviceProps singletons. This lets
+	// each whatsmeow Client running in the same process advertise a
+	// distinct fingerprint without mutating shared state. Set by callers
+	// AFTER GetFirstDevice() and BEFORE NewClient().
+	UserAgentOverride   *waWa6.ClientPayload_UserAgent
+	DevicePropsOverride *waCompanionReg.DeviceProps
 }
 
 func (device *Device) GetJID() types.JID {
