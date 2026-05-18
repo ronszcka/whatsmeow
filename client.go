@@ -176,6 +176,7 @@ type Client struct {
 	// GetClientPayload is called to get the client payload for connecting to the server.
 	// This should NOT be used for WhatsApp (to change the OS name, update fields in store.BaseClientPayload directly).
 	GetClientPayload func() *waWa6.ClientPayload
+	QRClientType     PairClientType
 	// ShouldEmitAutoPresenceFn optionally gates the post-connect automatic presence send.
 	ShouldEmitAutoPresenceFn func(generation uint64) bool
 

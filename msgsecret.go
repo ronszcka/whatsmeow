@@ -115,11 +115,11 @@ func (cli *Client) decryptMsgSecret(ctx context.Context, msg *events.Message, us
 		// Hack for trying both the original sender in the new message and the one who we received the secret key from.
 		// This will hopefully become unnecessary when WhatsApp fully finishes their migration to LIDs.
 		if origSender != storedOrigSender && strings.Contains(err.Error(), "message authentication failed") {
-			secretKey, additionalData = generateMsgSecretKey(useCase, msg.Info.Sender, origMsgKey.GetID(), origSender, baseEncKey)
+			secretKey, additionalData = generateMsgSecretKey(useCase, msg.Info.Sender, origMsgKey.GetID(), storedOrigSender, baseEncKey)
 			plaintext, err = gcmutil.Decrypt(secretKey, encrypted.GetEncIV(), encrypted.GetEncPayload(), additionalData)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt secret message: %w", err)
+			return nil, fmt.Errorf("failed to decrypt secret message: %w (sender: %s, orig sender: %s and %s)", err, msg.Info.Sender, origSender, storedOrigSender)
 		}
 	}
 	return plaintext, nil
@@ -263,7 +263,7 @@ func (cli *Client) DecryptSecretEncryptedMessage(ctx context.Context, evt *event
 	}
 	plaintext, err := cli.decryptMsgSecret(ctx, evt, secretType, encMessage, encMessage.GetTargetMessageKey())
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt message: %w", err)
+		return nil, err
 	}
 	var msg waE2E.Message
 	err = proto.Unmarshal(plaintext, &msg)
