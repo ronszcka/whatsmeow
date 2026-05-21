@@ -180,6 +180,17 @@ type Client struct {
 	// ShouldEmitAutoPresenceFn optionally gates the post-connect automatic presence send.
 	ShouldEmitAutoPresenceFn func(generation uint64) bool
 
+	// OnSessionRecreate is invoked whenever whatsmeow decides to recreate
+	// a Signal session with a peer (BiaZap fork patch #10, 2026-05-21).
+	// Fires from shouldRecreateSession when it returns recreate=true —
+	// either because we have no session (first contact) or because retry
+	// count > 1 + cooldown elapsed. Callback runs synchronously inside
+	// the retry handler; keep it lightweight (metrics increment, event
+	// emit, log). Reason carries the human-readable explanation from
+	// shouldRecreateSession ("no session", "retry count > 1 ...").
+	// nil = no-op, preserves upstream behavior bit-for-bit.
+	OnSessionRecreate func(jid types.JID, retryCount int, reason string)
+
 	// Should untrusted identity errors be handled automatically? If true, the stored identity and existing signal
 	// sessions will be removed on untrusted identity errors, and an events.IdentityChange will be dispatched.
 	// If false, decrypting a message from untrusted devices will fail.

@@ -163,16 +163,26 @@ func (cli *Client) shouldRecreateSession(ctx context.Context, retryCount int, ji
 		return "", false
 	} else if !contains {
 		cli.sessionRecreateHistory[jid] = time.Now()
-		return "we don't have a Signal session with them", true
+		reason = "we don't have a Signal session with them"
+		recreate = true
 	} else if retryCount < 2 {
 		return "", false
+	} else {
+		prevTime, ok := cli.sessionRecreateHistory[jid]
+		if !ok || prevTime.Add(recreateSessionTimeout).Before(time.Now()) {
+			cli.sessionRecreateHistory[jid] = time.Now()
+			reason = "retry count > 1 and over an hour since last recreation"
+			recreate = true
+		}
 	}
-	prevTime, ok := cli.sessionRecreateHistory[jid]
-	if !ok || prevTime.Add(recreateSessionTimeout).Before(time.Now()) {
-		cli.sessionRecreateHistory[jid] = time.Now()
-		return "retry count > 1 and over an hour since last recreation", true
+	// BiaZap fork patch #10: notify the embedding application whenever
+	// whatsmeow chooses to recreate a Signal session. Lets the host emit
+	// metrics + a dedicated event without polling for state changes.
+	// Hook runs INSIDE the sessionRecreateHistoryLock — must be lightweight.
+	if recreate && cli.OnSessionRecreate != nil {
+		cli.OnSessionRecreate(jid, retryCount, reason)
 	}
-	return "", false
+	return reason, recreate
 }
 
 type incomingRetryKey struct {
