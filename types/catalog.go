@@ -1,22 +1,21 @@
-// Copyright (c) 2026 BiaZap (fork patch #11 — catalog API)
+// Copyright (c) 2026 BiaZap (fork patch #11 — catalog READ API)
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
+//
+// READ ONLY — the write path (ProductInput + ProductCreate/Update/Delete) was
+// removed 2026-05-24 after the product_catalog_add IQ proved to hang with no
+// matched response. See catalog.go header + whatsmeow-fork.md patch #11.
 
 package types
 
-// ProductImage is a single image attached to a catalog product.
-//
-// On a parsed product (read path), RequestURL and OriginalURL point at
-// WhatsApp's media CDN (mmg.whatsapp.net / *.fbcdn.net). The embedding
-// application MUST NOT expose these URLs to its own consumers directly —
-// cache them through the instance proxy and re-emit an application URL
-// (see BiaZap proxy-discipline lesson #31/#35).
+// ProductImage is a single image attached to a catalog product. RequestURL
+// and OriginalURL point at WhatsApp's media CDN (mmg.whatsapp.net /
+// *.fbcdn.net). The embedding application MUST NOT expose these URLs to its
+// own consumers directly — cache them through the instance proxy and re-emit
+// an application URL (see BiaZap proxy-discipline lesson #31/#35).
 type ProductImage struct {
-	// DirectPath is the WhatsApp media direct path used when CREATING/UPDATING
-	// a product (write path). On the read path it is empty.
-	DirectPath string
 	// RequestURL is the request_image_url returned by the catalog read path.
 	RequestURL string
 	// OriginalURL is the original_image_url returned by the catalog read path.
@@ -58,23 +57,4 @@ type CatalogCollection struct {
 // Collections is the result of GetCollections.
 type Collections struct {
 	Collections []CatalogCollection
-}
-
-// ProductInput is the create/update payload for a catalog product.
-//
-// Images must already be uploaded to WhatsApp's media servers (each entry's
-// DirectPath set via UploadProductImage). The catalog IQ only accepts media
-// references by direct-path URL, never raw bytes.
-type ProductInput struct {
-	Name        string
-	Description string
-	RetailerID  string
-	Price       int64
-	Currency    string
-	IsHidden    bool
-	// OriginCountryCode is the ISO country code for product origin. Empty
-	// marks the product COUNTRY_ORIGIN_EXEMPT.
-	OriginCountryCode string
-	// Images carries already-uploaded product images (DirectPath required).
-	Images []ProductImage
 }
