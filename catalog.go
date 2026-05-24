@@ -20,10 +20,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strconv"
 
 	waBinary "go.mau.fi/whatsmeow/binary"
+	"go.mau.fi/whatsmeow/socket"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -32,11 +37,11 @@ const (
 	catalogNamespace = "w:biz:catalog"
 	// productImageDim is the requested thumbnail dimension (Baileys uses 100x100).
 	productImageDim = "100"
-	// MediaProductCatalogImage is the MediaType for uploading a catalog product
-	// image. Unlike message media, catalog images are uploaded UNencrypted
-	// (the catalog node references them by direct-path URL). Wired into
-	// mediaTypeToMMSType as "product-catalog-image".
-	MediaProductCatalogImage MediaType = "WhatsApp Catalog Image Keys"
+	// productImageUploadPath is the media-host path for catalog product image
+	// uploads. UNLIKE message media (which uses /mms/{type}), catalog images
+	// post to /product/image and are UNencrypted (the catalog node references
+	// them by direct-path URL). Mirrors Baileys MEDIA_PATH_MAP['product-catalog-image'].
+	productImageUploadPath = "/product/image"
 )
 
 // childString returns the []byte content of the first child with the given
@@ -239,24 +244,78 @@ func (cli *Client) ProductDelete(ctx context.Context, productIDs []string) (int,
 }
 
 // UploadProductImage uploads a catalog product image to WhatsApp's media
-// servers and returns the result with DirectPath set. Catalog images are
-// uploaded UNencrypted (the catalog node references them by direct-path
-// URL, unlike message media which is E2E encrypted). The returned
-// DirectPath feeds types.ProductImage.DirectPath for ProductCreate/Update.
+// servers and returns the result with DirectPath/URL set. Catalog images are
+// uploaded UNencrypted (the catalog node references them by direct-path URL,
+// unlike message media which is E2E encrypted), and to a DIFFERENT path
+// (/product/image, not /mms/...). The returned DirectPath feeds
+// types.ProductImage.DirectPath for ProductCreate/Update.
 //
 // The upload goes through cli.mediaHTTP, which on BiaZap is bound to the
 // instance's proxy — so this byte path obeys the proxy/VPN invariant.
 //
-// Ref (Baileys): src/Utils/business.ts uploadingNecessaryImages (mediaType "product-catalog-image")
+// Ref (Baileys): src/Utils/business.ts uploadingNecessaryImages + src/Utils/messages-media.ts getWAUploadToServer (mediaType "product-catalog-image", MEDIA_PATH_MAP "/product/image", encodeBase64EncodedStringForUpload)
 func (cli *Client) UploadProductImage(ctx context.Context, data []byte) (resp UploadResponse, err error) {
 	if cli == nil {
 		return resp, ErrClientIsNil
 	}
-	hash := sha256.Sum256(data)
-	resp.FileSHA256 = hash[:]
+	if len(data) == 0 {
+		return resp, fmt.Errorf("empty product image")
+	}
+	sum := sha256.Sum256(data)
+	resp.FileSHA256 = sum[:]
 	resp.FileLength = uint64(len(data))
-	err = cli.rawUpload(ctx, bytes.NewReader(data), resp.FileLength, resp.FileSHA256, MediaProductCatalogImage, false, &resp)
-	return
+	// Baileys: digest('base64') then encodeBase64EncodedStringForUpload
+	// (+→-, /→_, strip padding) == base64url without padding.
+	token := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	mediaConn, err := cli.refreshMediaConn(ctx, false)
+	if err != nil {
+		return resp, fmt.Errorf("failed to refresh media connections: %w", err)
+	}
+
+	var lastErr error
+	for _, host := range mediaConn.Hosts {
+		uploadURL := url.URL{
+			Scheme:   "https",
+			Host:     host.Hostname,
+			Path:     fmt.Sprintf("%s/%s", productImageUploadPath, token),
+			RawQuery: url.Values{"auth": {mediaConn.Auth}, "token": {token}}.Encode(),
+		}
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL.String(), bytes.NewReader(data))
+		if reqErr != nil {
+			return resp, fmt.Errorf("failed to prepare product image upload: %w", reqErr)
+		}
+		req.ContentLength = int64(len(data))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.Header.Set("Origin", socket.Origin)
+		req.Header.Set("Referer", socket.Origin+"/")
+
+		httpResp, doErr := cli.mediaHTTP.Do(req)
+		if doErr != nil {
+			lastErr = fmt.Errorf("upload to %s failed: %w", host.Hostname, doErr)
+			continue
+		}
+		if httpResp.StatusCode != http.StatusOK {
+			_ = httpResp.Body.Close()
+			lastErr = fmt.Errorf("upload to %s returned status %d", host.Hostname, httpResp.StatusCode)
+			continue
+		}
+		decErr := json.NewDecoder(httpResp.Body).Decode(&resp)
+		_ = httpResp.Body.Close()
+		if decErr != nil {
+			lastErr = fmt.Errorf("failed to parse product image upload response: %w", decErr)
+			continue
+		}
+		if resp.DirectPath == "" && resp.URL == "" {
+			lastErr = fmt.Errorf("product image upload to %s returned no direct_path", host.Hostname)
+			continue
+		}
+		return resp, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no media hosts available")
+	}
+	return resp, lastErr
 }
 
 // toProductNode builds the <product> binary node for create/update.

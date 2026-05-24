@@ -134,10 +134,6 @@ var mediaTypeToMMSType = map[MediaType]string{
 
 	MediaStickerPack:   "sticker-pack",
 	MediaLinkThumbnail: "thumbnail-link",
-
-	// BiaZap fork patch #11 — catalog product images are uploaded
-	// UNencrypted via this MMS type (see UploadProductImage in catalog.go).
-	MediaProductCatalogImage: "product-catalog-image",
 }
 
 // DownloadAny loops through the downloadable parts of the given message and downloads the first non-nil item.
