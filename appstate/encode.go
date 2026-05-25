@@ -358,6 +358,29 @@ func BuildDeleteChat(target types.JID, lastMessageTimestamp time.Time, lastMessa
 	}
 }
 
+// BuildClearChat builds an app state patch that clears a chat's messages while
+// keeping the chat in the list (distinct from BuildDeleteChat which removes the
+// chat entirely). Mirrors Baileys chatModify clear (src/Utils/chat-utils.ts:650
+// — index ['clearChat', jid, '1', '0'], apiVersion 6). The '1' means starred
+// messages are NOT kept; '0' is the trailing option Baileys sends. BiaZap fork
+// patch #12 (the const IndexClearChat + the ClearChatAction proto already
+// shipped upstream; only this builder was missing).
+func BuildClearChat(target types.JID, lastMessageTimestamp time.Time, lastMessageKey *waCommon.MessageKey) PatchInfo {
+	action := &waSyncAction.ClearChatAction{
+		MessageRange: newMessageRange(lastMessageTimestamp, lastMessageKey),
+	}
+	return PatchInfo{
+		Type: WAPatchRegularHigh,
+		Mutations: []MutationInfo{{
+			Index:   []string{IndexClearChat, target.String(), "1", "0"},
+			Version: 6,
+			Value: &waSyncAction.SyncActionValue{
+				ClearChatAction: action,
+			},
+		}},
+	}
+}
+
 func newMessageRange(lastMessageTimestamp time.Time, lastMessageKey *waCommon.MessageKey) *waSyncAction.SyncActionMessageRange {
 	if lastMessageTimestamp.IsZero() {
 		lastMessageTimestamp = time.Now()
