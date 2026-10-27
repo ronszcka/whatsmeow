@@ -157,7 +157,7 @@ func (cli *Client) handlePairSuccess(ctx context.Context, node *waBinary.Node) {
 				if delay := cli.postPairDelay(); delay > 0 {
 					time.Sleep(delay)
 				}
-				cli.sendUnifiedSession()
+				cli.sendUnifiedSession(false)
 			}()
 			cli.dispatchEvent(&events.PairSuccess{ID: jid, LID: lid, BusinessName: businessName, Platform: platform, Props: &props})
 		}

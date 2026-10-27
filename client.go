@@ -89,6 +89,8 @@ type Client struct {
 	SynchronousAck             bool
 	EnableDecryptedEventBuffer bool
 	lastDecryptedBufferClear   time.Time
+	lastUnifiedSessionSend     time.Time
+	UnifiedSessionInterval     time.Duration
 
 	DisableLoginAutoReconnect bool
 
@@ -1156,11 +1158,14 @@ func (cli *Client) getUnifiedSessionID() string {
 	return strconv.FormatInt(unifiedID, 10)
 }
 
-func (cli *Client) sendUnifiedSession() {
+func (cli *Client) sendUnifiedSession(checkLastSend bool) {
 	if cli == nil {
 		return
 	}
-
+	if checkLastSend && time.Since(cli.lastUnifiedSessionSend) < cli.UnifiedSessionInterval {
+		return
+	}
+	cli.lastUnifiedSessionSend = time.Now()
 	node := waBinary.Node{
 		Tag:   "ib",
 		Attrs: waBinary.Attrs{},
