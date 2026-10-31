@@ -70,7 +70,7 @@ func (cli *Client) handleEncryptNotification(ctx context.Context, node *waBinary
 	}
 }
 
-func (cli *Client) handleAppStateNotification(ctx context.Context, node *waBinary.Node) {
+func (cli *Client) handleAppStateNotification(ctx context.Context, node *waBinary.Node) bool {
 	for _, collection := range node.GetChildrenByTag("collection") {
 		ag := collection.AttrGetter()
 		name := appstate.WAPatchName(ag.String("name"))
@@ -80,7 +80,7 @@ func (cli *Client) handleAppStateNotification(ctx context.Context, node *waBinar
 		if errors.Is(err, ErrIQDisconnected) || errors.Is(err, ErrNotConnected) {
 			// There are some app state changes right before a remote logout, so stop syncing if we're disconnected.
 			cli.Log.Debugf("Failed to sync app state after notification: %v, not trying to sync other states", err)
-			return
+			return false
 		} else if errors.Is(err, appstate.ErrMismatchingLTHash) || errors.Is(err, appstate.ErrMismatchingPatchMAC) {
 			cli.Log.Warnf("App state %s has mismatching hash/MAC, forcing full resync", name)
 			err = cli.FetchAppState(ctx, name, true, false)
@@ -103,6 +103,7 @@ func (cli *Client) handleAppStateNotification(ctx context.Context, node *waBinar
 			cli.Log.Errorf("Failed to sync app state after notification: %v", err)
 		}
 	}
+	return true
 }
 
 func (cli *Client) handlePictureNotification(ctx context.Context, node *waBinary.Node) {
@@ -503,7 +504,11 @@ func (cli *Client) handleNotification(ctx context.Context, node *waBinary.Node) 
 	case "encrypt":
 		go cli.handleEncryptNotification(ctx, node)
 	case "server_sync":
-		go cli.handleAppStateNotification(ctx, node)
+		if cli.SynchronousAck {
+			cancelled = !cli.handleAppStateNotification(ctx, node)
+		} else {
+			go cli.handleAppStateNotification(ctx, node)
+		}
 	case "account_sync":
 		go cli.handleAccountSyncNotification(ctx, node)
 	case "devices":
