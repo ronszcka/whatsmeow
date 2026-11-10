@@ -45,6 +45,9 @@ func (cli *Client) fetchAppState(ctx context.Context, name appstate.WAPatchName,
 	}
 	cli.appStateSyncLock.Lock()
 	defer cli.appStateSyncLock.Unlock()
+	if until := cli.appStateBackoff[name]; time.Now().Before(until) {
+		return nil, fmt.Errorf("%w: not fetching %s until %s", ErrAppStateRateLimited, name, until.Format(time.RFC3339))
+	}
 	if fullSync {
 		err := cli.Store.AppState.DeleteAppStateVersion(ctx, string(name))
 		if err != nil {
@@ -72,6 +75,7 @@ func (cli *Client) fetchAppState(ctx context.Context, name appstate.WAPatchName,
 	}
 	for hasMore {
 		patches, err := cli.fetchAppStatePatches(ctx, name, state.Version, wantSnapshot)
+		cli.recordAppStateBackoff(name, err)
 		if err != nil {
 			if fullSync && ctx.Err() == nil && cli.BackgroundEventCtx.Err() == nil {
 				cli.dispatchEvent(&events.AppStateSyncError{Name: name, FullSync: fullSync, Error: err})
@@ -98,6 +102,20 @@ func (cli *Client) fetchAppState(ctx context.Context, name appstate.WAPatchName,
 	return eventsToDispatch, nil
 }
 
+// recordAppStateBackoff stores the server-requested backoff of a 429
+// rate-overlimit app state fetch error. Caller must hold appStateSyncLock.
+func (cli *Client) recordAppStateBackoff(name appstate.WAPatchName, err error) {
+	var iqErr *IQError
+	if errors.As(err, &iqErr) && iqErr.Code == 429 && iqErr.ErrorNode != nil {
+		if backoff := iqErr.ErrorNode.AttrGetter().OptionalInt("backoff"); backoff > 0 {
+			if cli.appStateBackoff == nil {
+				cli.appStateBackoff = make(map[appstate.WAPatchName]time.Time)
+			}
+			cli.appStateBackoff[name] = time.Now().Add(time.Duration(backoff) * time.Second)
+		}
+	}
+}
+
 // recoverAppState forces a full resync of the named app state collection without
 // MAC validation. This is used as a last resort when both incremental sync and
 // validated full sync fail due to corrupted local state (mismatching LTHash).
@@ -107,6 +125,9 @@ func (cli *Client) recoverAppState(ctx context.Context, name appstate.WAPatchNam
 	}
 	cli.appStateSyncLock.Lock()
 	defer cli.appStateSyncLock.Unlock()
+	if until := cli.appStateBackoff[name]; time.Now().Before(until) {
+		return fmt.Errorf("%w: not recovering %s until %s", ErrAppStateRateLimited, name, until.Format(time.RFC3339))
+	}
 
 	if err := cli.Store.AppState.DeleteAppStateVersion(ctx, string(name)); err != nil {
 		return fmt.Errorf("failed to reset app state %s version: %w", name, err)
@@ -117,6 +138,7 @@ func (cli *Client) recoverAppState(ctx context.Context, name appstate.WAPatchNam
 	wantSnapshot := true
 	for hasMore {
 		patches, err := cli.fetchAppStatePatches(ctx, name, state.Version, wantSnapshot)
+		cli.recordAppStateBackoff(name, err)
 		if err != nil {
 			return fmt.Errorf("failed to fetch app state %s patches: %w", name, err)
 		}
@@ -301,7 +323,8 @@ func (cli *Client) dispatchAppState(ctx context.Context, name appstate.WAPatchNa
 		return
 	}
 
-	if mutation.Operation != waServerSync.SyncdMutation_SET {
+	isContactRemove := mutation.Operation == waServerSync.SyncdMutation_REMOVE && mutation.Index[0] == appstate.IndexContact
+	if mutation.Operation != waServerSync.SyncdMutation_SET && !isContactRemove {
 		return
 	}
 
@@ -341,6 +364,9 @@ func (cli *Client) dispatchAppState(ctx context.Context, name appstate.WAPatchNa
 		}
 	case appstate.IndexContact:
 		act := mutation.Action.GetContactAction()
+		if isContactRemove {
+			act = nil
+		}
 		eventToDispatch = &events.Contact{JID: jid, Timestamp: ts, Action: act, FromFullSync: fullSync}
 		if cli.Store.Contacts != nil {
 			storeUpdateError = cli.Store.Contacts.PutContactName(ctx, jid, act.GetFirstName(), act.GetFullName())
