@@ -47,11 +47,11 @@ type Catalog struct {
 
 // CatalogCollection is a named grouping of products in a business catalog.
 type CatalogCollection struct {
-	ID       string
-	Name     string
-	Status   string
+	ID        string
+	Name      string
+	Status    string
 	CanAppeal bool
-	Products []Product
+	Products  []Product
 }
 
 // Collections is the result of GetCollections.
